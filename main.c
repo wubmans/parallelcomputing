@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <pthread.h>
+#include <unistd.h>
 
 #include <time.h>
 
@@ -19,14 +20,22 @@ double total;
 
 Pool* pool;
 
-typedef struct bitVector
+typedef struct BloomFilter
 {
     int bits[BLOOM_SIZE];
     int size;
     pthread_mutex_t mutexes[BLOOM_SIZE];
     
-} bitVector;
+} BloomFilter;
 
+struct put_params
+{
+    char* string;
+    int length;
+} put_params;
+
+
+BloomFilter* bloomFilter;
 
 /*
 
@@ -67,135 +76,139 @@ clock_t begin = clock();
     return hash;
 }
 
-bitVector* createBitVector(size_t size)
+BloomFilter* createBloomFilter(size_t size)
 {
-    bitVector* vector = malloc(sizeof(bitVector));
+    BloomFilter* bloomFilter = malloc(sizeof(BloomFilter));
 
-    vector->size = size;
+    bloomFilter->size = size;
 
     for(int i=0;i<BLOOM_SIZE;i++)
     {
-        pthread_mutex_init(&(vector->mutexes[i]), NULL);
+        pthread_mutex_init(&(bloomFilter->mutexes[i]), NULL);
     }
 
-    return vector;
+    return bloomFilter;
 }
 
-bool getBitVectorValue(bitVector* bitVector, size_t position)
+bool getBloomFilterValue(size_t position)
 {
-    if (position >= bitVector->size)
+    if (position >= bloomFilter->size)
     {
         printf("position is out of bounds for the bit vector");
         exit(EXIT_FAILURE);
     }
 
-    pthread_mutex_lock(&(bitVector->mutexes[position]));
+    pthread_mutex_lock(&(bloomFilter->mutexes[position]));
 
-    bool bit = bitVector->bits[position] == 1;
+    bool bit = bloomFilter->bits[position] == 1;
 
-    pthread_mutex_unlock(&(bitVector->mutexes[position]));
+    pthread_mutex_unlock(&(bloomFilter->mutexes[position]));
 
     return bit; 
 }
 
-void setBitVectorValue(bitVector* bitVector, size_t position, bool value)
+void setBloomFilterValue(size_t position, bool value)
 {
-    if (position >= bitVector->size)
+    if (position >= bloomFilter->size)
     {
         printf("position is out of bounds for the bit vector");
         exit(EXIT_FAILURE);
     }
 
-    pthread_mutex_lock(&(bitVector->mutexes[position]));
+    pthread_mutex_lock(&(bloomFilter->mutexes[position]));
 
-    bitVector->bits[position] = value;
+    bloomFilter->bits[position] = value;
 
-    pthread_mutex_unlock(&(bitVector->mutexes[position]));
+    pthread_mutex_unlock(&(bloomFilter->mutexes[position]));
 }
 
-void putValue(bitVector* bitVector, void* data, int length)
+void putValue(void* args)
 {
 
-    uint32_t hash = djb2(data, length) % bitVector->size;
-    //printf("The djb2 hash value is %d\n", hash);
-    setBitVectorValue(bitVector, hash, 1);
+    struct put_params *wub = (struct put_params *) args;
+    char* data = wub->string;
+    int length = wub->length;
 
-    hash = sdbm(data, length) % bitVector->size;
+    uint32_t hash = djb2(data, length) % bloomFilter->size;
+    //printf("The djb2 hash value is %d\n", hash);
+    setBloomFilterValue(hash, 1);
+
+    hash = sdbm(data, length) % bloomFilter->size;
     //printf("The sdbm hash value is %d\n", hash);
-    setBitVectorValue(bitVector, hash, 1);
+    setBloomFilterValue(hash, 1);
 
 }
 
-void testValue(bitVector* bitVector, void* data, size_t length)
+void testValue(void* data, size_t length)
 {
     bool bit = true;
 
-    uint32_t hash = djb2(data, length) % bitVector->size;
+    uint32_t hash = djb2(data, length) % bloomFilter->size;
     //printf("The djb2 hash value is %d\n", hash);
-    bit &= getBitVectorValue(bitVector, hash);
+    bit &= getBloomFilterValue(hash);
 
     //printf("That bit is: %d\n", bit);
 
-    hash = sdbm(data, length) % bitVector->size;
+    hash = sdbm(data, length) % bloomFilter->size;
     //printf("The sdbm hash value is %d\n", hash);
-    bit &= getBitVectorValue(bitVector, hash);
+    bit &= getBloomFilterValue(hash);
  
     //printf("\n\nResult: %d\n", bit);
 }
 
-void printBitVector(bitVector* bitVector)
+void printBloomFilter()
 {
-    printf("\n\n---BitVector---\n");
-    for (int i = 0; i < bitVector->size; i++)
+    printf("\n\n---BloomFilter---\n");
+    for (int i = 0; i < bloomFilter->size; i++)
     {
-        printf("%d", getBitVectorValue(bitVector, i));
+        printf("%d", getBloomFilterValue(i));
     }
 }
 
-struct put_params
-{
-    bitVector* bitVector;
-    char* string;
-    int length;
-} put_params;
+
 
 // https://stackoverflow.com/questions/49595265/how-to-split-a-text-file-using-tab-space-in-c
-void split_string(bitVector* bitVector, char *line) {
+void split_string(char *line) {
     
-    struct put_params *params = malloc(sizeof(struct put_params));
+    struct put_params *params;
     
     const char delimiter[] = "\t";
     char *tmp;
 
     tmp = strtok(line, delimiter);
     if (tmp == NULL)
-    return;
+    {
+        return;
+    }
 
     //printf("%s\n", tmp);
-    //putValue(bitVector, tmp, strlen(tmp));
+    //putValue(BloomFilter, tmp, strlen(tmp));
     
-    params->bitVector = bitVector;
+    params = calloc(1, sizeof(struct put_params));
+
     params->string = tmp;
     params->length = strlen(tmp);
 
-    addWork(pool, putValue, params);
+    addWork(pool, (threadFunction) &putValue, params);
 
     for (;;) {
         tmp = strtok(NULL, delimiter);
+        
         if (tmp == NULL)
             break;
-        //printf("%s\n", tmp);
-        // putValue(bitVector, tmp, strlen(tmp));
+        // printf("%s\n", tmp);
+        // putValue(BloomFilter, tmp, strlen(tmp));
 
-        params->bitVector = bitVector;
+        params = calloc(1, sizeof(struct put_params));
+
         params->string = tmp;
         params->length = strlen(tmp);
 
-        addWork(pool, putValue, params);
+        addWork(pool, (threadFunction) &putValue, params);
     }
 }
 
-void readFile(bitVector* bitVector, char* fileName)
+void readFile(char* fileName)
 {  
     char *line = NULL;
     size_t size;
@@ -206,7 +219,7 @@ void readFile(bitVector* bitVector, char* fileName)
     }
 
     while (getline(&line, &size, fp) != -1) {
-        split_string(bitVector, line);
+        split_string(line);
     }
 
     free(line);
@@ -222,42 +235,43 @@ int main ()
 
     pool = createThreadPool(4);
 
-    // for (int i = 0; i < 23002; i++)
-    // {
-    //     addWork(pool, bla, NULL);
-    // }
+    for (int i = 0; i < 23002; i++)
+    {
+        //addWork(pool, bla, NULL);
+        //sleep(1);
+    }
 
     clock_t begin = clock();
 
-    bitVector* bitVector = createBitVector(BLOOM_SIZE);
-    readFile(bitVector, "dataset-string-matching_train.txt");
+    bloomFilter = createBloomFilter(BLOOM_SIZE);
+    readFile("dataset-string-matching_train.txt");
   
     // printf("Adfadf");
-    // printf("size of the vector is : %d\n", bitVector->size);
-    // printf("Printin bitvector:\n\n");
+    // printf("size of the vector is : %d\n", BloomFilter->size);
+    // printf("Printin BloomFilter:\n\n");
 
     // srand(2032);
 
-    // for (int i = 0; i < bitVector->size; i++)
+    // for (int i = 0; i < BloomFilter->size; i++)
     // {
     //     int value = rand() % 2;
     //     printf("setting %d to %d\n", i, value);
-    //     setBitVectorValue(bitVector, i, value);
+    //     setBloomFilterValue(BloomFilter, i, value);
     // }
 
     // char* s = "asdflkassdf";
     // char* t = "sasdflkasdf1";
 
     // //addWork(pool, putValue, )
-    // putValue(bitVector, s, strlen(s));
-    // testValue(bitVector, s, strlen(s));
+    // putValue(BloomFilter, s, strlen(s));
+    // testValue(BloomFilter, s, strlen(s));
 
-    // testValue(bitVector, t, strlen(t));
+    // testValue(BloomFilter, t, strlen(t));
     
-    // putValue(bitVector, t, strlen(t)); 
-    // testValue(bitVector, t, strlen(t));     
+    // putValue(BloomFilter, t, strlen(t)); 
+    // testValue(BloomFilter, t, strlen(t));     
 
-    //printBitVector(bitVector);
+    //printBloomFilter(BloomFilter);
 
     clock_t end = clock();
 

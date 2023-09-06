@@ -40,10 +40,7 @@ Work* getWork(Pool* pool)
         return NULL;
     }
 
-    if (work->next != NULL)
-    {
-        pool->firstWork = work->next;
-    }
+    pool->firstWork = work->next;
    
     return work;
 }
@@ -56,7 +53,7 @@ void destroyWork(Work* work)
         return;
     }
 
-    printf("\nfreeing: %i\n", work->i);
+    //printf("\nfreeing: %i\n", work->i);
     free(work);
 
 }
@@ -71,13 +68,13 @@ void* runWorker(void* args)
 
     while(true)
     {
-        //printf("running worker..\n");
+        // printf("running worker..\n");
         pthread_mutex_lock(&(pool->mutex));
 
-        while (pool->firstWork == NULL)
-        {
-            pthread_cond_wait(&(pool->condition), &(pool->mutex));
-        }
+        // while (pool->firstWork == NULL)
+        // {
+        //     pthread_cond_wait(&(pool->condition), &(pool->mutex));
+        // }
 
         //printf("try to find work!");
 
@@ -86,7 +83,7 @@ void* runWorker(void* args)
 
         if (work != NULL)
         {
-            printf("thread %i running work %i\n", thread, work->i);
+            // printf("thread %i running work %i\n", thread, work->i);
             work->func(work->arg);
             destroyWork(work);
 
@@ -100,20 +97,15 @@ void* runWorker(void* args)
 
 void addWork(Pool* pool, threadFunction func, void* arg)
 {
-
-    printf("asdfadf")
-;    Work* work = malloc(sizeof(*work));
+    Work* work = malloc(sizeof(*work));
     work->func = func;
     work->arg = arg;
     work->next = NULL; 
     work->i = workCounter++;
-    //
-    //return work;
     
-    pthread_mutex_lock(&(pool->mutex));
+    //printf("adding work");
 
-    //printf("\n\nfirstWork: %p\n", pool->firstWork);
-    //printf("work: %p\n\n", work);
+    pthread_mutex_lock(&(pool->mutex));
 
     if (pool->firstWork == NULL)
     {
